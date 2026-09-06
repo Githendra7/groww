@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Plus, Trash2 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
 import { useRouter } from 'next/navigation';
+import { StockChart } from './StockChart';
 
 export function WatchlistTable({
     userWatchlist,
@@ -18,8 +19,10 @@ export function WatchlistTable({
     initialPrices?: Record<string, any>
 }) {
     const livePrices = useMarketStore((state) => state.livePrices);
-    const [isOpen, setIsOpen] = useState(false);
+    const [isAddOpen, setIsAddOpen] = useState(false);
+    const [selectedStock, setSelectedStock] = useState<any | null>(null);
     const [loading, setLoading] = useState<string | null>(null);
+
     const supabase = createClient();
     const router = useRouter();
 
@@ -36,7 +39,8 @@ export function WatchlistTable({
         setLoading(null);
     };
 
-    const removeStock = async (symbol: string) => {
+    const removeStock = async (e: React.MouseEvent, symbol: string) => {
+        e.stopPropagation(); // Prevents row click (modal open) when clicking the trash can!
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
             await supabase.from('user_watchlists').delete().eq('user_id', user.id).eq('symbol', symbol);
@@ -44,21 +48,26 @@ export function WatchlistTable({
         }
     };
 
+    // Helper for the chart modal
+    const selectedLiveData = selectedStock ? (livePrices[selectedStock.symbol] || initialPrices[selectedStock.symbol]) : null;
+    const safeChange = selectedLiveData?.change || 0; // Safe fallback if undefined
+    const selectedIsPositive = safeChange >= 0;
+
     return (
         <div className="space-y-4">
-            {/* Table Header & Add Button */}
+
+            {/* 1. Header & Add Stocks Button */}
             <div className="flex justify-between items-center">
                 <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider">
                     Tracking {userWatchlist.length} Stocks
                 </h2>
 
                 <div className="flex items-center">
-                    {/* FIX 1: We removed DialogTrigger and used onClick directly to prevent nested buttons! */}
-                    <Button variant="outline" size="sm" className="h-8" onClick={() => setIsOpen(true)}>
+                    <Button variant="outline" size="sm" className="h-8" onClick={() => setIsAddOpen(true)}>
                         <Plus className="w-4 h-4 mr-2" /> Add Stocks
                     </Button>
 
-                    <Dialog open={isOpen} onOpenChange={setIsOpen}>
+                    <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
                         <DialogContent className="max-h-[80vh] overflow-y-auto">
                             <DialogHeader>
                                 <DialogTitle>Add to your Watchlist</DialogTitle>
@@ -82,7 +91,7 @@ export function WatchlistTable({
                 </div>
             </div>
 
-            {/* The Data Table */}
+            {/* 2. Main Watchlist Table */}
             <div className="border rounded-md bg-white shadow-sm overflow-hidden">
                 <Table>
                     <TableHeader className="bg-slate-50">
@@ -90,7 +99,6 @@ export function WatchlistTable({
                             <TableHead>Company</TableHead>
                             <TableHead className="text-right">Mkt Price</TableHead>
                             <TableHead className="text-right">1D Change</TableHead>
-                            {/* FIX 2: Removed the comment so it doesn't create whitespace in the <tr> */}
                             <TableHead className="text-right" />
                         </TableRow>
                     </TableHeader>
@@ -106,7 +114,12 @@ export function WatchlistTable({
                             const isPositive = change >= 0;
 
                             return (
-                                <TableRow key={stock.symbol} className="group">
+                                // Added cursor-pointer to indicate it's clickable
+                                <TableRow
+                                    key={stock.symbol}
+                                    className="group cursor-pointer hover:bg-slate-50/80 transition-colors"
+                                    onClick={() => setSelectedStock(stock)}
+                                >
                                     <TableCell>
                                         <div className="font-medium">{stock.company_name}</div>
                                         <div className="text-xs text-muted-foreground">{stock.symbol.replace('.NS', '')}</div>
@@ -118,8 +131,9 @@ export function WatchlistTable({
                                         {isPositive ? '+' : ''}{change.toFixed(2)}%
                                     </TableCell>
                                     <TableCell className="text-right w-[50px]">
+                                        {/* The onClick here has e.stopPropagation() so it deletes instead of opening the chart */}
                                         <button
-                                            onClick={() => removeStock(stock.symbol)}
+                                            onClick={(e) => removeStock(e, stock.symbol)}
                                             className="opacity-0 group-hover:opacity-100 p-2 text-slate-400 hover:text-red-500 transition-opacity"
                                             title="Remove from Watchlist"
                                         >
@@ -132,6 +146,33 @@ export function WatchlistTable({
                     </TableBody>
                 </Table>
             </div>
+
+            {/* 3. The Chart Modal */}
+            <Dialog open={!!selectedStock} onOpenChange={(open) => !open && setSelectedStock(null)}>
+                <DialogContent className="sm:max-w-[500px]">
+                    {selectedStock && selectedLiveData && (
+                        <>
+                            <DialogHeader>
+                                <DialogTitle className="flex justify-between items-start">
+                                    <div>
+                                        <h2 className="text-xl font-bold">{selectedStock.company_name}</h2>
+                                        <p className="text-sm text-slate-500 font-normal">{selectedStock.symbol.replace('.NS', '')}</p>
+                                    </div>
+                                    <div className="text-right">
+                                        <p className="text-xl font-bold">₹{selectedLiveData.price.toFixed(2)}</p>
+                                        <p className={`text-sm font-medium ${selectedIsPositive ? 'text-emerald-500' : 'text-red-500'}`}>
+                                            {selectedIsPositive ? '▲' : '▼'} {Math.abs(safeChange).toFixed(2)}%
+                                        </p>
+                                    </div>
+                                </DialogTitle>
+                            </DialogHeader>
+
+                            {/* Render the Recharts component */}
+                            <StockChart symbol={selectedStock.symbol} />
+                        </>
+                    )}
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }
